@@ -17,6 +17,8 @@ static inline char *program_name(void) {
 
 void usage(FILE *stream) {
   fprintf(stream, "USAGE: %s [OPTIONS]\n", program_name());
+  fprintf(stream,
+          "NOTE: do not start VM as sudo, otherwise audio won't work.\n");
   fprintf(stream, "OPTIONS:\n");
   flag_print_options(stream);
 }
@@ -26,24 +28,28 @@ static inline bool is_root(void) {
   return uid == 0;
 }
 
-#define WIN11_DRIVE "/mnt/gayming/school/win11.qcow2"
-#define QEMU_FLAGS                                                            \
-  "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                    \
-    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"        \
-    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",        \
-    "-vga", "qxl", "-device", "virtio-serial-pci", "-spice",                  \
-    "port=5930,disable-ticketing=on", "-device",                              \
-    "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0",           \
-    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",         \
-    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet", \
+#define CAMERA_BUS  "001"
+#define CAMERA_ADDR "002"
+
+#define QEMU_FLAGS                                                             \
+  "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                     \
+    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"         \
+    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",         \
+    "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=snd0",        \
+    "-audiodev", "pipewire,id=snd0", "-vga", "qxl", "-device",                 \
+    "virtio-serial-pci", "-spice", "port=5930,disable-ticketing=on",           \
+    "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
+    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
+    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
+    "-usb", "-device", "usb-ehci,id=ehci", "-device",                          \
+    "usb-host,hostbus=" CAMERA_BUS ",hostaddr=" CAMERA_ADDR ",bus=ehci.0",     \
     "-nic", "user,model=e1000", "-monitor", "stdio"
 int main(int argc, char **argv) {
-  Cmd    cmd   = { 0 };
-  char **mount = flag_str("mount", NULL, "mount disk to path     [ROOT ONLY]");
-  char **umount =
-    flag_str("umount", NULL, "unmount disk from path [ROOT ONLY]");
-  char **drive = flag_str(
-    "drive", "/mnt/gayming/school/win11.qcow2", "qemu qcow2 drive path");
+  Cmd    cmd    = { 0 };
+  char **mount  = flag_str("mount", NULL, "mount disk to path");
+  char **umount = flag_str("umount", NULL, "unmount disk from path");
+  char **drive  = flag_str(
+    "drive", "/mnt/gayming/school/img/win11.qcow2", "qemu qcow2 drive path");
   char **iso =
     flag_str("iso", "/mnt/gayming/school/win11.iso", "path to windows iso");
   bool *help = flag_bool("help", false, "Print this help message");
@@ -64,14 +70,10 @@ int main(int argc, char **argv) {
       return 1;
   }
   if(*mount) {
-    if(!is_root()) {
-      nob_log(ERROR, "-mount must be run as root");
-      return 1;
-    }
-    cmd_append(&cmd, "modprobe", "nbd", "max_part=8");
+    cmd_append(&cmd, "sudo", "modprobe", "nbd", "max_part=8");
     if(!cmd_run(&cmd))
       return 1;
-    cmd_append(&cmd, "qemu-nbd", "--connect=/dev/nbd0", *drive);
+    cmd_append(&cmd, "sudo", "qemu-nbd", "--connect=/dev/nbd0", *drive);
     if(!cmd_run(&cmd))
       return 1;
     cmd_append(&cmd, "sudo", "mount", "/dev/nbd0p2", *mount);
@@ -81,25 +83,30 @@ int main(int argc, char **argv) {
     return 0;
   }
   if(*umount) {
-    if(!is_root()) {
-      nob_log(ERROR, "-umount must be run as root");
-      return 1;
-    }
-    cmd_append(&cmd, "umount", *umount);
+    cmd_append(&cmd, "sudo", "umount", *umount);
     if(!cmd_run(&cmd))
       return 1;
-    cmd_append(&cmd, "qemu-nbd", "--disconnect", "/dev/nbd0");
+    cmd_append(&cmd, "sudo", "qemu-nbd", "--disconnect", "/dev/nbd0");
     if(!cmd_run(&cmd))
       return 1;
     nob_log(INFO, "unmounted %s", *umount);
     return 0;
   }
+  if(is_root()) {
+    nob_log(ERROR, "do not run VM as root.");
+    return 1;
+  }
+  nob_log(INFO, "setting camera permissions...");
+  cmd_append(
+    &cmd, "sudo", "chmod", "a+rw", "/dev/bus/usb/" CAMERA_BUS "/" CAMERA_ADDR);
+  if(!cmd_run(&cmd))
+    return 1;
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
   cmd_append(&cmd, "-drive", temp_sprintf("file=%s", *drive));
   if(first_boot) {
     if(!file_exists(*iso)) {
       usage(stderr);
-      nob_log(ERROR, "%s doesn't exist", *iso);
+      nob_log(ERROR, "'%s' doesn't exist", *iso);
       nob_log(INFO, "need to provide valid iso for first boot");
       return 1;
     }

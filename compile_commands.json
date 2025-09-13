@@ -1,0 +1,17 @@
+[
+	{
+		"arguments": [
+			"/usr/bin/gcc",
+			"-c",
+			"-I.",
+			"-DNOB_IMPLEMENTATION",
+			"-Wno-macro-redefined",
+			"-o",
+			"school",
+			"main.c"
+		],
+		"directory": "/home/rebecca/code/c/school",
+		"file": "/home/rebecca/code/c/school/main.c",
+		"output": "/home/rebecca/code/c/school/school"
+	}
+]

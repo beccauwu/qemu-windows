@@ -28,8 +28,34 @@ static inline bool is_root(void) {
   return uid == 0;
 }
 
-#define CAMERA_BUS  "001"
-#define CAMERA_ADDR "002"
+#define CAMERA_ID "0bda:5650"
+
+bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
+  Cmd cmd = { 0 };
+  cmd_append(&cmd, "lsusb", "-d", CAMERA_ID);
+  const char *of = "/tmp/school_qemu_lsusb";
+  if(!cmd_run(&cmd, .stdout_path = of)) {
+    nob_log(ERROR, "couldn't find camera with id '%s'", CAMERA_ID);
+    return false;
+  }
+  String_Builder sb = { 0 };
+  if(!read_entire_file(of, &sb))
+    return false;
+  // Bus <bus> Device <addr>: ID <id> <name>
+  String_View sv       = sb_to_sv(sb);
+  String_View bus_str  = sv_chop_by_delim(&sv, ' ');
+  String_View bus      = sv_chop_by_delim(&sv, ' ');
+  String_View addr_str = sv_chop_by_delim(&sv, ' ');
+  String_View addr     = sv_chop_by_delim(&sv, ':');
+  nob_log(INFO,
+          "found camera with id '%s' at bus '" SV_Fmt "', addr '" SV_Fmt "'",
+          CAMERA_ID,
+          SV_Arg(bus),
+          SV_Arg(addr));
+  *bus_out  = temp_sv_to_cstr(bus);
+  *addr_out = temp_sv_to_cstr(addr);
+  return true;
+}
 
 #define QEMU_FLAGS                                                             \
   "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                     \
@@ -41,9 +67,8 @@ static inline bool is_root(void) {
     "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
     "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
     "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
-    "-usb", "-device", "usb-ehci,id=ehci", "-device",                          \
-    "usb-host,hostbus=" CAMERA_BUS ",hostaddr=" CAMERA_ADDR ",bus=ehci.0",     \
-    "-nic", "user,model=e1000", "-monitor", "stdio"
+    "-usb", "-device", "usb-ehci,id=ehci", "-nic", "user,model=e1000",         \
+    "-monitor", "stdio"
 int main(int argc, char **argv) {
   Cmd    cmd    = { 0 };
   char **mount  = flag_str("mount", NULL, "mount disk to path");
@@ -96,13 +121,25 @@ int main(int argc, char **argv) {
     nob_log(ERROR, "do not run VM as root.");
     return 1;
   }
+  const char *camera_bus;
+  const char *camera_addr;
+  if(!get_camera_bus_addr(&camera_bus, &camera_addr))
+    return 1;
   nob_log(INFO, "setting camera permissions...");
-  cmd_append(
-    &cmd, "sudo", "chmod", "a+rw", "/dev/bus/usb/" CAMERA_BUS "/" CAMERA_ADDR);
+  cmd_append(&cmd,
+             "sudo",
+             "chmod",
+             "a+rw",
+             temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
   if(!cmd_run(&cmd))
     return 1;
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
   cmd_append(&cmd, "-drive", temp_sprintf("file=%s", *drive));
+  cmd_append(&cmd,
+             "-device",
+             temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
+                          camera_bus,
+                          camera_addr));
   if(first_boot) {
     if(!file_exists(*iso)) {
       usage(stderr);

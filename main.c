@@ -69,14 +69,77 @@ bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
     "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
     "-usb", "-device", "usb-ehci,id=ehci", "-nic", "user,model=e1000",         \
     "-monitor", "stdio"
+
+Cmd cmd = { 0 };
+
+bool mount_drive(const char *drive, const char *path) {
+  cmd_append(&cmd, "sudo", "modprobe", "nbd", "max_part=8");
+  if(!cmd_run(&cmd))
+    return false;
+  cmd_append(&cmd, "sudo", "qemu-nbd", "--connect=/dev/nbd0", drive);
+  if(!cmd_run(&cmd))
+    return false;
+  cmd_append(&cmd, "sudo", "mount", "/dev/nbd0p2", path);
+  if(!cmd_run(&cmd))
+    return false;
+  nob_log(INFO, "mounted disk to '%s'", path);
+  return true;
+}
+bool unmount_drive(const char *path) {
+  cmd_append(&cmd, "sudo", "umount", path);
+  if(!cmd_run(&cmd))
+    return false;
+  cmd_append(&cmd, "sudo", "qemu-nbd", "--disconnect", "/dev/nbd0");
+  if(!cmd_run(&cmd))
+    return false;
+  nob_log(INFO, "unmounted '%s'", path);
+  return true;
+}
+
+bool run_emu(const char *drive, const char *iso) {
+  const char *camera_bus;
+  const char *camera_addr;
+  if(!get_camera_bus_addr(&camera_bus, &camera_addr))
+    return false;
+  nob_log(INFO, "setting camera permissions...");
+  cmd_append(&cmd,
+             "sudo",
+             "chmod",
+             "a+rw",
+             temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
+  if(!cmd_run(&cmd))
+    return false;
+  cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
+  cmd_append(&cmd, "-drive", temp_sprintf("file=%s", drive));
+  cmd_append(&cmd,
+             "-device",
+             temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
+                          camera_bus,
+                          camera_addr));
+  if(iso != NULL) {
+    if(!file_exists(iso)) {
+      usage(stderr);
+      nob_log(ERROR, "'%s' doesn't exist", iso);
+      nob_log(INFO, "need to provide valid iso for first boot");
+      return false;
+    }
+    cmd_append(&cmd, "-cdrom", iso);
+  }
+
+  if(!cmd_run(&cmd))
+    return false;
+  return true;
+}
+
 int main(int argc, char **argv) {
-  Cmd    cmd    = { 0 };
   char **mount  = flag_str("mount", NULL, "mount disk to path");
   char **umount = flag_str("umount", NULL, "unmount disk from path");
   char **drive  = flag_str(
     "drive", "/mnt/gayming/school/img/win11.qcow2", "qemu qcow2 drive path");
   char **iso =
     flag_str("iso", "/mnt/gayming/school/win11.iso", "path to windows iso");
+  bool *make = flag_bool(
+    "make", false, "create <drive> before boot (needs valid iso to boot)");
   bool *help = flag_bool("help", false, "Print this help message");
   if(!flag_parse(argc, argv)) {
     usage(stderr);
@@ -87,70 +150,20 @@ int main(int argc, char **argv) {
     usage(stderr);
     return 0;
   }
-  bool first_boot = false;
-  if(!file_exists(*drive)) {
-    first_boot = true;
+  if(*make) {
     cmd_append(&cmd, "qemu-img", "create", "-f", "qcow2", *drive, "50G");
     if(!cmd_run(&cmd))
       return 1;
   }
-  if(*mount) {
-    cmd_append(&cmd, "sudo", "modprobe", "nbd", "max_part=8");
-    if(!cmd_run(&cmd))
-      return 1;
-    cmd_append(&cmd, "sudo", "qemu-nbd", "--connect=/dev/nbd0", *drive);
-    if(!cmd_run(&cmd))
-      return 1;
-    cmd_append(&cmd, "sudo", "mount", "/dev/nbd0p2", *mount);
-    if(!cmd_run(&cmd))
-      return 1;
-    nob_log(INFO, "mounted disk to %s", *mount);
-    return 0;
-  }
-  if(*umount) {
-    cmd_append(&cmd, "sudo", "umount", *umount);
-    if(!cmd_run(&cmd))
-      return 1;
-    cmd_append(&cmd, "sudo", "qemu-nbd", "--disconnect", "/dev/nbd0");
-    if(!cmd_run(&cmd))
-      return 1;
-    nob_log(INFO, "unmounted %s", *umount);
-    return 0;
-  }
+  if(*mount)
+    mount_drive(*drive, *mount);
+  if(*umount)
+    unmount_drive(*umount);
   if(is_root()) {
     nob_log(ERROR, "do not run VM as root.");
     return 1;
   }
-  const char *camera_bus;
-  const char *camera_addr;
-  if(!get_camera_bus_addr(&camera_bus, &camera_addr))
-    return 1;
-  nob_log(INFO, "setting camera permissions...");
-  cmd_append(&cmd,
-             "sudo",
-             "chmod",
-             "a+rw",
-             temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
-  if(!cmd_run(&cmd))
-    return 1;
-  cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
-  cmd_append(&cmd, "-drive", temp_sprintf("file=%s", *drive));
-  cmd_append(&cmd,
-             "-device",
-             temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
-                          camera_bus,
-                          camera_addr));
-  if(first_boot) {
-    if(!file_exists(*iso)) {
-      usage(stderr);
-      nob_log(ERROR, "'%s' doesn't exist", *iso);
-      nob_log(INFO, "need to provide valid iso for first boot");
-      return 1;
-    }
-    cmd_append(&cmd, "-cdrom", *iso);
-  }
-
-  if(!cmd_run(&cmd))
+  if(!run_emu(*drive, *make ? *iso : NULL))
     return 1;
   return 0;
 }

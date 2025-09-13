@@ -6,6 +6,25 @@
 #define NOB_IMPLEMENTATION
 #define NOB_STRIP_PREFIX
 #include "nob.h"
+
+#define CAMERA_ID          "0bda:5650"
+#define DRIVE_ENV          "SCHOOL_DRIVE"
+#define DRIVE_MOUNT_ENV    "SCHOOL_DRIVE_MOUNT"
+#define QEMU_AUDIO_BACKEND "pipewire"
+
+#define QEMU_FLAGS                                                             \
+  "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                     \
+    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"         \
+    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",         \
+    "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=snd0",        \
+    "-audiodev", QEMU_AUDIO_BACKEND ",id=snd0", "-vga", "qxl", "-device",      \
+    "virtio-serial-pci", "-spice", "port=5930,disable-ticketing=on",           \
+    "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
+    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
+    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
+    "-usb", "-device", "usb-ehci,id=ehci", "-nic", "user,model=e1000",         \
+    "-monitor", "stdio"
+
 static char *_program_name = NULL;
 
 static inline char *program_name(void) {
@@ -28,12 +47,10 @@ static inline bool is_root(void) {
   return uid == 0;
 }
 
-#define CAMERA_ID "0bda:5650"
-
 bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
   Cmd cmd = { 0 };
   cmd_append(&cmd, "lsusb", "-d", CAMERA_ID);
-  const char *of = "/tmp/school_qemu_lsusb";
+  const char *of = "/tmp/qemu_win_camera_lsusb";
   if(!cmd_run(&cmd, .stdout_path = of)) {
     nob_log(ERROR, "couldn't find camera with id '%s'", CAMERA_ID);
     return false;
@@ -42,11 +59,11 @@ bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
   if(!read_entire_file(of, &sb))
     return false;
   // Bus <bus> Device <addr>: ID <id> <name>
-  String_View sv       = sb_to_sv(sb);
-  String_View bus_str  = sv_chop_by_delim(&sv, ' ');
-  String_View bus      = sv_chop_by_delim(&sv, ' ');
-  String_View addr_str = sv_chop_by_delim(&sv, ' ');
-  String_View addr     = sv_chop_by_delim(&sv, ':');
+  String_View sv = sb_to_sv(sb);
+  sv_chop_by_delim(&sv, ' ');
+  String_View bus = sv_chop_by_delim(&sv, ' ');
+  sv_chop_by_delim(&sv, ' ');
+  String_View addr = sv_chop_by_delim(&sv, ':');
   nob_log(INFO,
           "found camera with id '%s' at bus '" SV_Fmt "', addr '" SV_Fmt "'",
           CAMERA_ID,
@@ -56,19 +73,6 @@ bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
   *addr_out = temp_sv_to_cstr(addr);
   return true;
 }
-
-#define QEMU_FLAGS                                                             \
-  "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                     \
-    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"         \
-    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",         \
-    "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=snd0",        \
-    "-audiodev", "pipewire,id=snd0", "-vga", "qxl", "-device",                 \
-    "virtio-serial-pci", "-spice", "port=5930,disable-ticketing=on",           \
-    "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
-    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
-    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
-    "-usb", "-device", "usb-ehci,id=ehci", "-nic", "user,model=e1000",         \
-    "-monitor", "stdio"
 
 Cmd cmd = { 0 };
 
@@ -133,15 +137,15 @@ bool run_emu(const char *drive, const char *iso) {
 int main(int argc, char **argv) {
   char **drive =
     flag_str("drive",
-             getenv("SCHOOL_DRIVE"),
-             "qemu drive path. tries to get 'SCHOOL_DRIVE' from env");
+             getenv(DRIVE_ENV),
+             "qemu drive path. tries to get '" DRIVE_ENV "' from env");
   char **iso    = flag_str("iso", NULL, "path to windows iso");
   bool  *mount  = flag_bool("mount", false, "mount <drive> to <path>");
   bool  *umount = flag_bool("umount", false, "unmount disk from <path>");
   char **path   = flag_str(
     "path",
-    getenv("SCHOOL_DRIVE_MOUNT"),
-    "mount point for <drive>. tries to get 'SCHOOL_DRIVE_MOUNT' from env");
+    getenv(DRIVE_MOUNT_ENV),
+    "mount point for <drive>. tries to get '" DRIVE_MOUNT_ENV "' from env");
   bool *make = flag_bool(
     "make", false, "create <drive> before boot (needs valid iso to boot)");
   bool *help = flag_bool("help", false, "Print this help message");
@@ -157,7 +161,7 @@ int main(int argc, char **argv) {
   if((*umount || *mount) && *path == NULL) {
     usage(stderr);
     nob_log(ERROR,
-            "no mount point provided and 'SCHOOL_DRIVE_MOUNT' not in env");
+            "no mount point provided and '" DRIVE_MOUNT_ENV "' not in env");
     return 1;
   }
   if(*umount) {
@@ -166,7 +170,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if(*drive == NULL) {
-    nob_log(ERROR, "no drive provided and 'SCHOOL_DRIVE' not in env");
+    nob_log(ERROR, "no drive provided and '" DRIVE_ENV "' not in env");
     return 1;
   }
   if(*make) {
@@ -184,7 +188,7 @@ int main(int argc, char **argv) {
     }
   }
   if(*mount) {
-    if(!mount_drive(*drive, *drive))
+    if(!mount_drive(*drive, *path))
       return 1;
     return 0;
   }

@@ -10,8 +10,8 @@
 			"school",
 			"main.c"
 		],
-		"directory": "/home/rebecca/code/c/school",
-		"file": "/home/rebecca/code/c/school/main.c",
-		"output": "/home/rebecca/code/c/school/school"
+		"directory": ".",
+		"file": "./main.c",
+		"output": "./school"
 	}
 ]

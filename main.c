@@ -120,7 +120,6 @@ bool run_emu(const char *drive, const char *iso) {
     if(!file_exists(iso)) {
       usage(stderr);
       nob_log(ERROR, "'%s' doesn't exist", iso);
-      nob_log(INFO, "need to provide valid iso for first boot");
       return false;
     }
     cmd_append(&cmd, "-cdrom", iso);
@@ -132,12 +131,17 @@ bool run_emu(const char *drive, const char *iso) {
 }
 
 int main(int argc, char **argv) {
-  char **mount  = flag_str("mount", NULL, "mount disk to path");
-  char **umount = flag_str("umount", NULL, "unmount disk from path");
-  char **drive  = flag_str(
-    "drive", "/mnt/gayming/school/img/win11.qcow2", "qemu qcow2 drive path");
-  char **iso =
-    flag_str("iso", "/mnt/gayming/school/win11.iso", "path to windows iso");
+  char **drive =
+    flag_str("drive",
+             getenv("SCHOOL_DRIVE"),
+             "qemu drive path. tries to get 'SCHOOL_DRIVE' from env");
+  char **iso    = flag_str("iso", NULL, "path to windows iso");
+  bool  *mount  = flag_bool("mount", false, "mount <drive> to <path>");
+  bool  *umount = flag_bool("umount", false, "unmount disk from <path>");
+  char **path   = flag_str(
+    "path",
+    getenv("SCHOOL_DRIVE_MOUNT"),
+    "mount point for <drive>. tries to get 'SCHOOL_DRIVE_MOUNT' from env");
   bool *make = flag_bool(
     "make", false, "create <drive> before boot (needs valid iso to boot)");
   bool *help = flag_bool("help", false, "Print this help message");
@@ -150,20 +154,46 @@ int main(int argc, char **argv) {
     usage(stderr);
     return 0;
   }
-  if(*make) {
-    cmd_append(&cmd, "qemu-img", "create", "-f", "qcow2", *drive, "50G");
-    if(!cmd_run(&cmd))
-      return 1;
+  if((*umount || *mount) && *path == NULL) {
+    usage(stderr);
+    nob_log(ERROR,
+            "no mount point provided and 'SCHOOL_DRIVE_MOUNT' not in env");
+    return 1;
   }
-  if(*mount)
-    mount_drive(*drive, *mount);
-  if(*umount)
-    unmount_drive(*umount);
+  if(*umount) {
+    if(!unmount_drive(*path))
+      return 1;
+    return 0;
+  }
+  if(*drive == NULL) {
+    nob_log(ERROR, "no drive provided and 'SCHOOL_DRIVE' not in env");
+    return 1;
+  }
+  if(*make) {
+    if(file_exists(*drive))
+      nob_log(INFO, "'%s' already exists", *drive);
+    else {
+      if(*iso == NULL) {
+        usage(stderr);
+        nob_log(ERROR, "no iso provided");
+        return 1;
+      }
+      cmd_append(&cmd, "qemu-img", "create", "-f", "qcow2", *drive, "50G");
+      if(!cmd_run(&cmd))
+        return 1;
+    }
+  }
+  if(*mount) {
+    if(!mount_drive(*drive, *drive))
+      return 1;
+    return 0;
+  }
   if(is_root()) {
     nob_log(ERROR, "do not run VM as root.");
     return 1;
   }
-  if(!run_emu(*drive, *make ? *iso : NULL))
+
+  if(!run_emu(*drive, *iso))
     return 1;
   return 0;
 }

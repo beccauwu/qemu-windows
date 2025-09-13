@@ -1,12 +1,18 @@
 PREFIX ?= /usr/local
-school: main.c
-	gcc -I. -o school $<
+OUTFILE ?= school
+CFLAGS ?= -Wall -Wextra -I.
+LDFLAGS ?= 
+$(OUTFILE): main.c
+	$(CC) $(CFLAGS) -o $(OUTFILE) $< $(LDFLAGS)
 
 .PHONY: install
-install: school
-	cp -f $< "$(PREFIX)/bin/school"
+install: $(OUTFILE)
+	cp -f $< "$(PREFIX)/bin/$(OUTFILE)"
+
+.PHONY: uninstall
+uninstall:
+	rm "$(PREFIX)/bin/$(OUTFILE)"
 
 .PHONY: clean
 clean:
-	rm "$(PREFIX)/bin/school"
 	rm ./school

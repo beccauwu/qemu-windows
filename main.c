@@ -127,6 +127,8 @@ bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
                             camera_addr));
   if(net)
     cmd_append(&cmd, "-nic", "user,model=e1000");
+  else
+    cmd_append(&cmd, "-nic", "none");
   if(iso != NULL) {
     if(!file_exists(iso)) {
       usage(stderr);
@@ -200,7 +202,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if(!run_emu(*drive, *iso, !nonet, *camera_id))
+  if(!run_emu(*drive, *iso, !*nonet, *camera_id))
     return 1;
   return 0;
 }

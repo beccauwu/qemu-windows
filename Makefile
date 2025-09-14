@@ -1,5 +1,5 @@
 PREFIX ?= /usr/local
-OUTFILE ?= school
+OUTFILE ?= qemu-windows
 CFLAGS ?= -Wall -Wextra -I.
 LDFLAGS ?= 
 $(OUTFILE): main.c
@@ -15,4 +15,4 @@ uninstall:
 
 .PHONY: clean
 clean:
-	rm ./school
+	rm ./$(OUTFILE)

@@ -22,8 +22,7 @@
     "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
     "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
     "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
-    "-usb", "-device", "usb-ehci,id=ehci", "-nic", "user,model=e1000",         \
-    "-monitor", "stdio"
+    "-usb", "-device", "usb-ehci,id=ehci", "-monitor", "stdio"
 
 static char *_program_name = NULL;
 
@@ -100,26 +99,31 @@ bool unmount_drive(const char *path) {
   return true;
 }
 
-bool run_emu(const char *drive, const char *iso) {
+bool run_emu(const char *drive, const char *iso, bool net, bool cam) {
   const char *camera_bus;
   const char *camera_addr;
-  if(!get_camera_bus_addr(&camera_bus, &camera_addr))
-    return false;
-  nob_log(INFO, "setting camera permissions...");
-  cmd_append(&cmd,
-             "sudo",
-             "chmod",
-             "a+rw",
-             temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
+  if(cam) {
+    if(!get_camera_bus_addr(&camera_bus, &camera_addr))
+      return false;
+    nob_log(INFO, "setting camera permissions...");
+    cmd_append(&cmd,
+               "sudo",
+               "chmod",
+               "a+rw",
+               temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
+  }
   if(!cmd_run(&cmd))
     return false;
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
   cmd_append(&cmd, "-drive", temp_sprintf("file=%s", drive));
-  cmd_append(&cmd,
-             "-device",
-             temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
-                          camera_bus,
-                          camera_addr));
+  if(cam)
+    cmd_append(&cmd,
+               "-device",
+               temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
+                            camera_bus,
+                            camera_addr));
+  if(net)
+    cmd_append(&cmd, "-nic", "user,model=e1000");
   if(iso != NULL) {
     if(!file_exists(iso)) {
       usage(stderr);
@@ -148,7 +152,9 @@ int main(int argc, char **argv) {
     "mount point for <drive>. tries to get '" DRIVE_MOUNT_ENV "' from env");
   bool *make = flag_bool(
     "make", false, "create <drive> before boot (needs valid iso to boot)");
-  bool *help = flag_bool("help", false, "Print this help message");
+  bool *nonet = flag_bool("nonet", false, "don't add a network card");
+  bool *nocam = flag_bool("nocam", false, "don't add a camera");
+  bool *help  = flag_bool("help", false, "Print this help message");
   if(!flag_parse(argc, argv)) {
     usage(stderr);
     flag_print_error(stderr);
@@ -197,7 +203,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if(!run_emu(*drive, *iso))
+  if(!run_emu(*drive, *iso, !nonet, !nocam))
     return 1;
   return 0;
 }

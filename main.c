@@ -113,9 +113,10 @@ bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
                "chmod",
                "a+rw",
                temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
+    if(!cmd_run(&cmd))
+      return false;
   }
-  if(!cmd_run(&cmd))
-    return false;
+
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
   cmd_append(&cmd, "-drive", temp_sprintf("file=%s", drive));
   if(cam)

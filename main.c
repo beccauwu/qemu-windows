@@ -7,9 +7,6 @@
 #define NOB_STRIP_PREFIX
 #include "nob.h"
 
-#define CAMERA_ID          "0bda:5650"
-#define DRIVE_ENV          "SCHOOL_DRIVE"
-#define DRIVE_MOUNT_ENV    "SCHOOL_DRIVE_MOUNT"
 #define QEMU_AUDIO_BACKEND "pipewire"
 
 #define QEMU_FLAGS                                                             \
@@ -35,10 +32,13 @@ static inline char *program_name(void) {
 
 void usage(FILE *stream) {
   fprintf(stream, "USAGE: %s [OPTIONS]\n", program_name());
-  fprintf(stream,
-          "NOTE: do not start VM as sudo, otherwise audio won't work.\n");
   fprintf(stream, "OPTIONS:\n");
   flag_print_options(stream);
+  fprintf(stream, "NOTE:\n");
+  fprintf(stream, " - do not start VM as sudo, otherwise audio won't work.\n");
+  fprintf(
+    stream,
+    " - modifies permissions for /dev/bus/<camera> if `-camera` provided\n");
 }
 
 static inline bool is_root(void) {
@@ -46,12 +46,14 @@ static inline bool is_root(void) {
   return uid == 0;
 }
 
-bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
+bool get_camera_bus_addr(const char  *cam,
+                         const char **bus_out,
+                         const char **addr_out) {
   Cmd cmd = { 0 };
-  cmd_append(&cmd, "lsusb", "-d", CAMERA_ID);
+  cmd_append(&cmd, "lsusb", "-d", cam);
   const char *of = "/tmp/qemu_win_camera_lsusb";
   if(!cmd_run(&cmd, .stdout_path = of)) {
-    nob_log(ERROR, "couldn't find camera with id '%s'", CAMERA_ID);
+    nob_log(ERROR, "couldn't find camera with id '%s'", cam);
     return false;
   }
   String_Builder sb = { 0 };
@@ -65,7 +67,7 @@ bool get_camera_bus_addr(const char **bus_out, const char **addr_out) {
   String_View addr = sv_chop_by_delim(&sv, ':');
   nob_log(INFO,
           "found camera with id '%s' at bus '" SV_Fmt "', addr '" SV_Fmt "'",
-          CAMERA_ID,
+          cam,
           SV_Arg(bus),
           SV_Arg(addr));
   *bus_out  = temp_sv_to_cstr(bus);
@@ -99,11 +101,11 @@ bool unmount_drive(const char *path) {
   return true;
 }
 
-bool run_emu(const char *drive, const char *iso, bool net, bool cam) {
+bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
   const char *camera_bus;
   const char *camera_addr;
   if(cam) {
-    if(!get_camera_bus_addr(&camera_bus, &camera_addr))
+    if(!get_camera_bus_addr(cam, &camera_bus, &camera_addr))
       return false;
     nob_log(INFO, "setting camera permissions...");
     cmd_append(&cmd,
@@ -139,21 +141,16 @@ bool run_emu(const char *drive, const char *iso, bool net, bool cam) {
 }
 
 int main(int argc, char **argv) {
-  char **drive =
-    flag_str("drive",
-             getenv(DRIVE_ENV),
-             "qemu drive path. tries to get '" DRIVE_ENV "' from env");
+  char **drive  = flag_str("drive", NULL, "qemu drive path");
   char **iso    = flag_str("iso", NULL, "path to windows iso");
   bool  *mount  = flag_bool("mount", false, "mount <drive> to <path>");
   bool  *umount = flag_bool("umount", false, "unmount disk from <path>");
-  char **path   = flag_str(
-    "path",
-    getenv(DRIVE_MOUNT_ENV),
-    "mount point for <drive>. tries to get '" DRIVE_MOUNT_ENV "' from env");
+  char **path   = flag_str("path", NULL, "mount point for <drive>");
+  char **camera_id =
+    flag_str("camera", NULL, "camera id from lsusb (in format 123f:bd32)");
   bool *make = flag_bool(
     "make", false, "create <drive> before boot (needs valid iso to boot)");
   bool *nonet = flag_bool("nonet", false, "don't add a network card");
-  bool *nocam = flag_bool("nocam", false, "don't add a camera");
   bool *help  = flag_bool("help", false, "Print this help message");
   if(!flag_parse(argc, argv)) {
     usage(stderr);
@@ -166,8 +163,7 @@ int main(int argc, char **argv) {
   }
   if((*umount || *mount) && *path == NULL) {
     usage(stderr);
-    nob_log(ERROR,
-            "no mount point provided and '" DRIVE_MOUNT_ENV "' not in env");
+    nob_log(ERROR, "no mount point provided");
     return 1;
   }
   if(*umount) {
@@ -176,7 +172,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if(*drive == NULL) {
-    nob_log(ERROR, "no drive provided and '" DRIVE_ENV "' not in env");
+    nob_log(ERROR, "no drive provided");
     return 1;
   }
   if(*make) {
@@ -203,7 +199,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if(!run_emu(*drive, *iso, !nonet, !nocam))
+  if(!run_emu(*drive, *iso, !nonet, *camera_id))
     return 1;
   return 0;
 }

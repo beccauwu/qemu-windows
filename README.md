@@ -1,10 +1,12 @@
-# Windows for my school use
+# Qemu to boot windows
 
 mostly for me to be able to use native office apps for school since im not on windows. needed more functionality than a bash script, so i made this. Runs qemu with audio input/output and camera, spice protocol for display.
 
-Might be useful if you need to run windows in qemu. Just change `CAMERA_ID` definition to whatever `lsusb` gives as integrated camera id (might also work for external camera?), you can also change `DRIVE_ENV` and `DRIVE_MOUNT_ENV` to whatever you want to put in your env :3
+Might be useful if you need to run windows in qemu.
 
-note: runs lots of things as sudo, changes permissions on `/dev/bus/usb/<bus>`/`<device>` (otherwise qemu can't use camera)
+note: runs lots of things as sudo, changes permissions on `/dev/bus/usb/<bus>`/`<device>` (if `-nocam` isn't provied, otherwise qemu can't use camera)
+
+this might also work for other os's than windows, i'm just not sure about the partitions for mounting.
 
 ## Dependencies
 
@@ -16,4 +18,13 @@ note: runs lots of things as sudo, changes permissions on `/dev/bus/usb/<bus>`/`
 ```bash
 make
 sudo make install
+```
+
+I then make a shell alias with options set for the specific vm
+
+```bash
+# ~/.bashrc
+alias myvm='qemu-windows -drive myvm.qcow2 -path /mnt/myvm -nonet -camera 123f:bd32'
+
+$ myvm -iso ./windows10.iso -make
 ```

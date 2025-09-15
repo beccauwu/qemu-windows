@@ -10,7 +10,7 @@
 #define QEMU_AUDIO_BACKEND "pipewire"
 
 #define QEMU_FLAGS                                                             \
-  "-M", "q35,usb=on,acpi=on,hpet=off", "-m", "8G", "-cpu",                     \
+  "-M", "q35,usb=on,acpi=on,hpet=off", "-cpu",                                 \
     "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"         \
     "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",         \
     "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=snd0",        \
@@ -20,6 +20,18 @@
     "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
     "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
     "-usb", "-device", "usb-ehci,id=ehci", "-monitor", "stdio"
+
+static struct {
+  char *mem;
+  char *mount_point;
+  char *iso;
+  char *drive;
+  char *cam;
+  bool  net;
+  bool  mount;
+  bool  umount;
+  bool  make;
+} args = { 0 };
 
 static char *_program_name = NULL;
 
@@ -77,35 +89,35 @@ bool get_camera_bus_addr(const char  *cam,
 
 Cmd cmd = { 0 };
 
-bool mount_drive(const char *drive, const char *path) {
+bool mount_drive() {
   cmd_append(&cmd, "sudo", "modprobe", "nbd", "max_part=8");
   if(!cmd_run(&cmd))
     return false;
-  cmd_append(&cmd, "sudo", "qemu-nbd", "--connect=/dev/nbd0", drive);
+  cmd_append(&cmd, "sudo", "qemu-nbd", "--connect=/dev/nbd0", args.drive);
   if(!cmd_run(&cmd))
     return false;
-  cmd_append(&cmd, "sudo", "mount", "/dev/nbd0p2", path);
+  cmd_append(&cmd, "sudo", "mount", "/dev/nbd0p2", args.mount_point);
   if(!cmd_run(&cmd))
     return false;
-  nob_log(INFO, "mounted disk to '%s'", path);
+  nob_log(INFO, "mounted disk to '%s'", args.mount_point);
   return true;
 }
-bool unmount_drive(const char *path) {
-  cmd_append(&cmd, "sudo", "umount", path);
+bool unmount_drive() {
+  cmd_append(&cmd, "sudo", "umount", args.mount_point);
   if(!cmd_run(&cmd))
     return false;
   cmd_append(&cmd, "sudo", "qemu-nbd", "--disconnect", "/dev/nbd0");
   if(!cmd_run(&cmd))
     return false;
-  nob_log(INFO, "unmounted '%s'", path);
+  nob_log(INFO, "unmounted '%s'", args.mount_point);
   return true;
 }
 
-bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
+bool run_emu() {
   const char *camera_bus;
   const char *camera_addr;
-  if(cam) {
-    if(!get_camera_bus_addr(cam, &camera_bus, &camera_addr))
+  if(args.cam) {
+    if(!get_camera_bus_addr(args.cam, &camera_bus, &camera_addr))
       return false;
     nob_log(INFO, "setting camera permissions...");
     cmd_append(&cmd,
@@ -118,24 +130,25 @@ bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
   }
 
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
-  cmd_append(&cmd, "-drive", temp_sprintf("file=%s", drive));
-  if(cam)
+  cmd_append(&cmd, "-drive", temp_sprintf("file=%s", args.drive));
+  cmd_append(&cmd, "-m", args.mem);
+  if(args.cam)
     cmd_append(&cmd,
                "-device",
                temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
                             camera_bus,
                             camera_addr));
-  if(net)
+  if(args.net)
     cmd_append(&cmd, "-nic", "user,model=e1000");
   else
     cmd_append(&cmd, "-nic", "none");
-  if(iso != NULL) {
-    if(!file_exists(iso)) {
+  if(args.iso != NULL) {
+    if(!file_exists(args.iso)) {
       usage(stderr);
-      nob_log(ERROR, "'%s' doesn't exist", iso);
+      nob_log(ERROR, "'%s' doesn't exist", args.iso);
       return false;
     }
-    cmd_append(&cmd, "-cdrom", iso);
+    cmd_append(&cmd, "-cdrom", args.iso);
   }
 
   if(!cmd_run(&cmd))
@@ -143,57 +156,73 @@ bool run_emu(const char *drive, const char *iso, bool net, const char *cam) {
   return true;
 }
 
-int main(int argc, char **argv) {
+bool parse_args(int *argc, char ***argv) {
   char **drive  = flag_str("drive", NULL, "qemu drive path");
   char **iso    = flag_str("iso", NULL, "path to windows iso");
   bool  *mount  = flag_bool("mount", false, "mount <drive> to <path>");
   bool  *umount = flag_bool("umount", false, "unmount disk from <path>");
   char **path   = flag_str("path", NULL, "mount point for <drive>");
-  char **camera_id =
+  char **cam =
     flag_str("camera", NULL, "camera id from lsusb (in format 123f:bd32)");
-  bool *make = flag_bool(
+  char **mem  = flag_str("m", "8G", "amount of memory for VM");
+  bool  *make = flag_bool(
     "make", false, "create <drive> before boot (needs valid iso to boot)");
   bool *nonet = flag_bool("nonet", false, "don't add a network card");
   bool *help  = flag_bool("help", false, "Print this help message");
-  if(!flag_parse(argc, argv)) {
+  if(!flag_parse(*argc, *argv)) {
     usage(stderr);
     flag_print_error(stderr);
-    return 1;
+    return false;
   }
   if(*help) {
     usage(stderr);
-    return 0;
+    exit(0);
   }
-  if((*umount || *mount) && *path == NULL) {
+  args.drive       = *drive;
+  args.iso         = *iso;
+  args.mount       = *mount;
+  args.umount      = *umount;
+  args.mount_point = *path;
+  args.cam         = *cam;
+  args.mem         = *mem;
+  args.make        = *make;
+  args.net         = !*nonet;
+  return true;
+}
+
+int main(int argc, char **argv) {
+  if(!parse_args(&argc, &argv))
+    return 1;
+  if((args.umount || args.mount) && args.mount_point == NULL) {
     usage(stderr);
     nob_log(ERROR, "no mount point provided");
     return 1;
   }
-  if(*umount) {
-    if(!unmount_drive(*path))
+  if(args.umount) {
+    if(!unmount_drive())
       return 1;
     return 0;
   }
-  if(*drive == NULL) {
+  if(args.drive == NULL) {
     nob_log(ERROR, "no drive provided");
     return 1;
   }
-  if(*make) {
-    if(file_exists(*drive))
-      nob_log(INFO, "'%s' already exists", *drive);
+  if(args.make) {
+    if(file_exists(args.drive))
+      nob_log(INFO, "'%s' already exists", args.drive);
     else {
-      if(*iso == NULL) {
+      if(args.iso == NULL) {
         usage(stderr);
         nob_log(ERROR, "no iso provided");
         return 1;
       }
-      cmd_append(&cmd, "qemu-img", "create", "-f", "qcow2", *drive, "50G");
+      cmd_append(&cmd, "qemu-img", "create", "-f", "qcow2", args.drive, "50G");
       if(!cmd_run(&cmd))
         return 1;
     }
   }
-  if(*mount) {
-    if(!mount_drive(*drive, *path))
+  if(args.mount) {
+    if(!mount_drive())
       return 1;
     return 0;
   }
@@ -202,7 +231,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if(!run_emu(*drive, *iso, !*nonet, *camera_id))
+  if(!run_emu())
     return 1;
   return 0;
 }

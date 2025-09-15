@@ -73,9 +73,15 @@ bool get_camera_bus_addr(const char  *cam,
     return false;
   // Bus <bus> Device <addr>: ID <id> <name>
   String_View sv = sb_to_sv(sb);
-  sv_chop_by_delim(&sv, ' ');
+  if(!sv_eq(sv_chop_by_delim(&sv, ' '), sv_from_cstr("Bus"))) {
+    nob_log(ERROR, "lsusb output malformed");
+    abort();
+  }
   String_View bus = sv_chop_by_delim(&sv, ' ');
-  sv_chop_by_delim(&sv, ' ');
+  if(!sv_eq(sv_chop_by_delim(&sv, ' '), sv_from_cstr("Device"))) {
+    nob_log(ERROR, "lsusb output malformed");
+    abort();
+  }
   String_View addr = sv_chop_by_delim(&sv, ':');
   nob_log(INFO,
           "found camera with id '%s' at bus '" SV_Fmt "', addr '" SV_Fmt "'",

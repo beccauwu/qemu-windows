@@ -1,3 +1,4 @@
+#include <asm-generic/errno-base.h>
 #define FLAG_IMPLEMENTATION
 #include "flag.h"
 #include <stdbool.h>
@@ -125,14 +126,25 @@ bool run_emu() {
   if(args.cam) {
     if(!get_camera_bus_addr(args.cam, &camera_bus, &camera_addr))
       return false;
-    nob_log(INFO, "setting camera permissions...");
-    cmd_append(&cmd,
-               "sudo",
-               "chmod",
-               "a+rw",
-               temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr));
-    if(!cmd_run(&cmd))
-      return false;
+    const char *bus_file =
+      temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr);
+    if(access(bus_file, R_OK | W_OK) != 0) {
+      if(errno == EACCES) {
+        nob_log(INFO, "setting permissions for '%s'...", bus_file);
+        cmd_append(&cmd, "sudo", "chmod", "a+rw", bus_file);
+        if(!cmd_run(&cmd))
+          return false;
+      } else {
+        nob_log(ERROR,
+                "cannot set permissions for '%s': %s",
+                bus_file,
+                strerror(errno));
+        nob_log(INFO, "retry boot without camera or fix above error");
+        return false;
+      }
+    } else {
+      nob_log(INFO, "'%s' already has correct permissions!", bus_file);
+    }
   }
 
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);

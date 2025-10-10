@@ -199,13 +199,12 @@ bool parse_args(int *argc, char ***argv) {
                 "make",
                 false,
                 "create <drive> before boot (needs valid iso to boot)");
-  Flag_List *nos =
-    flag_list("no",
-              "what to disable\n"
-              "        supported options:\n"
-              "          aud/audio   - don't add audio device\n"
-              "          net/network - don't add network device");
-  bool *help = flag_bool("help", false, "Print this help message");
+  Flag_List *nos  = flag_list("no",
+                             "what to disable\n"
+                              "        supported options:\n"
+                              "          aud/audio   - audio device\n"
+                              "          net/network - network device");
+  bool      *help = flag_bool("help", false, "Print this help message");
   for(size_t i = 0; i < nos->count; ++i) {
     if(streq(nos->items[i], "aud") || streq(nos->items[i], "audio")) {
       args.noaud = true;

@@ -10,16 +10,15 @@
 
 #define QEMU_AUDIO_BACKEND "pipewire"
 
-#define QEMU_FLAGS                                                             \
-  "-M", "q35,usb=on,acpi=on,hpet=off", "-cpu",                                 \
-    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"         \
-    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",         \
-    "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=snd0",        \
-    "-audiodev", QEMU_AUDIO_BACKEND ",id=snd0", "-vga", "qxl", "-device",      \
-    "virtio-serial-pci", "-spice", "port=5930,disable-ticketing=on",           \
-    "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0", \
-    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",          \
-    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet",  \
+#define QEMU_FLAGS                                                            \
+  "-M", "q35,usb=on,acpi=on,hpet=off", "-cpu",                                \
+    "host,hv_relaxed,hv_frequencies,hv_vpindex,hv_ipi,hv_tlbflush,hv_"        \
+    "spinlocks=0x1fff,hv_synic,hv_runtime,hv_time,hv_stimer,hv_vapic",        \
+    "-vga", "qxl", "-device", "virtio-serial-pci", "-spice",                  \
+    "port=5930,disable-ticketing=on", "-device",                              \
+    "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0",           \
+    "-chardev", "spicevmc,id=spicechannel0,name=vdagent", "-display",         \
+    "spice-app", "-smp", "cores=4", "-accel", "kvm", "-device", "usb-tablet", \
     "-usb", "-device", "usb-ehci,id=ehci", "-monitor", "stdio"
 
 static struct {
@@ -28,7 +27,8 @@ static struct {
   char *iso;
   char *drive;
   char *cam;
-  bool  net;
+  bool  nonet;
+  bool  noaud;
   bool  mount;
   bool  umount;
   bool  make;
@@ -129,12 +129,7 @@ bool run_emu() {
     const char *bus_file =
       temp_sprintf("/dev/bus/usb/%s/%s", camera_bus, camera_addr);
     if(access(bus_file, R_OK | W_OK) != 0) {
-      if(errno == EACCES) {
-        nob_log(INFO, "setting permissions for '%s'...", bus_file);
-        cmd_append(&cmd, "sudo", "chmod", "a+rw", bus_file);
-        if(!cmd_run(&cmd))
-          return false;
-      } else {
+      if(errno != EACCES) {
         nob_log(ERROR,
                 "cannot set permissions for '%s': %s",
                 bus_file,
@@ -142,6 +137,10 @@ bool run_emu() {
         nob_log(INFO, "retry boot without camera or fix above error");
         return false;
       }
+      nob_log(INFO, "setting permissions for '%s'...", bus_file);
+      cmd_append(&cmd, "sudo", "chmod", "a+rw", bus_file);
+      if(!cmd_run(&cmd))
+        return false;
     } else {
       nob_log(INFO, "'%s' already has correct permissions!", bus_file);
     }
@@ -150,16 +149,28 @@ bool run_emu() {
   cmd_append(&cmd, "qemu-system-x86_64", QEMU_FLAGS);
   cmd_append(&cmd, "-drive", temp_sprintf("file=%s", args.drive));
   cmd_append(&cmd, "-m", args.mem);
+
   if(args.cam)
     cmd_append(&cmd,
                "-device",
                temp_sprintf("usb-host,hostbus=%s,hostaddr=%s,bus=ehci.0",
                             camera_bus,
                             camera_addr));
-  if(args.net)
-    cmd_append(&cmd, "-nic", "user,model=e1000");
-  else
+
+  if(!args.noaud)
+    cmd_append(&cmd,
+               "-device",
+               "ich9-intel-hda",
+               "-device",
+               "hda-duplex,audiodev=snd0",
+               "-audiodev",
+               QEMU_AUDIO_BACKEND ",id=snd0");
+
+  if(args.nonet)
     cmd_append(&cmd, "-nic", "none");
+  else
+    cmd_append(&cmd, "-nic", "user,model=e1000");
+
   if(args.iso != NULL) {
     if(!file_exists(args.iso)) {
       usage(stderr);
@@ -173,20 +184,36 @@ bool run_emu() {
     return false;
   return true;
 }
+#define streq(s1, s2) (strcmp((s1), (s2)) == 0)
 
 bool parse_args(int *argc, char ***argv) {
-  char **drive  = flag_str("drive", NULL, "qemu drive path");
-  char **iso    = flag_str("iso", NULL, "path to windows iso");
-  bool  *mount  = flag_bool("mount", false, "mount <drive> to <path>");
-  bool  *umount = flag_bool("umount", false, "unmount disk from <path>");
-  char **path   = flag_str("path", NULL, "mount point for <drive>");
-  char **cam =
-    flag_str("camera", NULL, "camera id from lsusb (in format 123f:bd32)");
-  char **mem  = flag_str("m", "8G", "amount of memory for VM");
-  bool  *make = flag_bool(
-    "make", false, "create <drive> before boot (needs valid iso to boot)");
-  bool *nonet = flag_bool("nonet", false, "don't add a network card");
-  bool *help  = flag_bool("help", false, "Print this help message");
+  flag_str_var(&args.drive, "drive", NULL, "qemu drive path");
+  flag_str_var(&args.iso, "iso", NULL, "path to windows iso");
+  flag_bool_var(&args.mount, "mount", false, "mount <drive> to <path>");
+  flag_bool_var(&args.umount, "umount", false, "unmount disk from <path>");
+  flag_str_var(&args.mount_point, "path", NULL, "mount point for <drive>");
+  flag_str_var(
+    &args.cam, "camera", NULL, "camera id from lsusb (in format 123f:bd32)");
+  flag_str_var(&args.mem, "m", "8G", "amount of memory for VM");
+  flag_bool_var(&args.make,
+                "make",
+                false,
+                "create <drive> before boot (needs valid iso to boot)");
+  Flag_List *nos =
+    flag_list("no",
+              "what not to add\n"
+              "        supported options:\n"
+              "          aud/audio   - don't add audio device\n"
+              "          net/network - don't add network device");
+  bool *help = flag_bool("help", false, "Print this help message");
+  for(size_t i = 0; i < nos->count; ++i) {
+    if(streq(nos->items[i], "aud") || streq(nos->items[i], "audio")) {
+      args.noaud = true;
+    }
+    if(streq(nos->items[i], "net") || streq(nos->items[i], "network")) {
+      args.nonet = true;
+    }
+  }
   if(!flag_parse(*argc, *argv)) {
     usage(stderr);
     flag_print_error(stderr);
@@ -196,15 +223,6 @@ bool parse_args(int *argc, char ***argv) {
     usage(stderr);
     exit(0);
   }
-  args.drive       = *drive;
-  args.iso         = *iso;
-  args.mount       = *mount;
-  args.umount      = *umount;
-  args.mount_point = *path;
-  args.cam         = *cam;
-  args.mem         = *mem;
-  args.make        = *make;
-  args.net         = !*nonet;
   return true;
 }
 

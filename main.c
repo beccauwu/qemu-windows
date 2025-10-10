@@ -201,7 +201,7 @@ bool parse_args(int *argc, char ***argv) {
                 "create <drive> before boot (needs valid iso to boot)");
   Flag_List *nos =
     flag_list("no",
-              "what not to add\n"
+              "what to disable\n"
               "        supported options:\n"
               "          aud/audio   - don't add audio device\n"
               "          net/network - don't add network device");

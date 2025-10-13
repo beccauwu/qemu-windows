@@ -205,14 +205,7 @@ bool parse_args(int *argc, char ***argv) {
                               "          aud/audio   - audio device\n"
                               "          net/network - network device");
   bool      *help = flag_bool("help", false, "Print this help message");
-  for(size_t i = 0; i < nos->count; ++i) {
-    if(streq(nos->items[i], "aud") || streq(nos->items[i], "audio")) {
-      args.noaud = true;
-    }
-    if(streq(nos->items[i], "net") || streq(nos->items[i], "network")) {
-      args.nonet = true;
-    }
-  }
+
   if(!flag_parse(*argc, *argv)) {
     usage(stderr);
     flag_print_error(stderr);
@@ -221,6 +214,16 @@ bool parse_args(int *argc, char ***argv) {
   if(*help) {
     usage(stderr);
     exit(0);
+  }
+  for(size_t i = 0; i < nos->count; ++i) {
+    if(streq(nos->items[i], "aud") || streq(nos->items[i], "audio")) {
+      nob_log(INFO, "audio device disabled");
+      args.noaud = true;
+    }
+    if(streq(nos->items[i], "net") || streq(nos->items[i], "network")) {
+      nob_log(INFO, "network device disabled");
+      args.nonet = true;
+    }
   }
   return true;
 }
